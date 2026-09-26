@@ -1,1629 +1,2140 @@
-const API = "/api";
+"use strict";
 
+/* =========================================================
+   EDRAK AI - APP.JS
+   Frontend: GitHub Pages / Netlify
+   Backend: Render
+   ========================================================= */
+
+/*
+  مهم:
+  غيّر الرابط ده إلى رابط Render الخاص بـ server.js
+
+  مثال:
+  https://edrak-api.onrender.com
+
+  لا تضع هنا:
+  https://ysyd5732-byte.github.io/Edrak7/
+
+  لأن ده رابط الواجهة فقط.
+*/
+
+const API_URL =
+    window.EDRAK_API_URL ||
+    "https://YOUR-RENDER-URL.onrender.com";
+
+
+/* =========================================================
+   STORAGE
+   ========================================================= */
+
+const TOKEN_KEY = "edrak_token";
+const USER_KEY = "edrak_user";
+const CHAT_KEY = "edrak_current_chat";
+const API_KEY_STORAGE = "edrak_api_url";
+
+
+/* =========================================================
+   GLOBAL STATE
+   ========================================================= */
+
+let currentUser = null;
+let chats = [];
 let currentChatId = null;
 let currentMessages = [];
-let allChats = [];
-
-const token = localStorage.getItem("edrak_token");
+let isSending = false;
 
 
-/* =====================================================
-   HELPERS
-===================================================== */
+/* =========================================================
+   DOM HELPERS
+   ========================================================= */
 
-function $(id) {
-    return document.getElementById(id);
+function $(...selectors) {
+    for (const selector of selectors) {
+        const element = document.querySelector(selector);
+
+        if (element) {
+            return element;
+        }
+    }
+
+    return null;
+}
+
+function $all(...selectors) {
+    for (const selector of selectors) {
+        const elements =
+            document.querySelectorAll(selector);
+
+        if (elements.length) {
+            return [...elements];
+        }
+    }
+
+    return [];
 }
 
 
-function escapeHTML(text) {
+/* =========================================================
+   API URL
+   ========================================================= */
 
-    const div = document.createElement("div");
+function getApiBaseUrl() {
 
-    div.textContent = text ?? "";
+    const saved =
+        localStorage.getItem(API_KEY_STORAGE);
 
-    return div.innerHTML;
+    if (saved && saved.trim()) {
+        return saved.trim().replace(/\/+$/, "");
+    }
+
+    return String(API_URL || "")
+        .trim()
+        .replace(/\/+$/, "");
 }
 
 
-function formatText(text) {
+/* =========================================================
+   TOKEN
+   ========================================================= */
 
-    return escapeHTML(text)
-        .replace(/\n/g, "<br>");
+function getToken() {
+    return localStorage.getItem(TOKEN_KEY);
+}
+
+function saveToken(token) {
+
+    if (!token) {
+        return;
+    }
+
+    localStorage.setItem(
+        TOKEN_KEY,
+        token
+    );
+}
+
+function logoutUser() {
+
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(CHAT_KEY);
+
+    currentUser = null;
+    chats = [];
+    currentChatId = null;
+    currentMessages = [];
+
+    location.href = "login.html";
 }
 
 
-/* =====================================================
-   AUTH
-===================================================== */
+/* =========================================================
+   API REQUEST
+   ========================================================= */
 
-if (!token) {
+async function apiFetch(endpoint, options = {}) {
 
-    window.location.href = "login.html";
+    const baseURL =
+        getApiBaseUrl();
 
-}
+    if (
+        !baseURL ||
+        baseURL.includes("YOUR-RENDER-URL")
+    ) {
 
+        throw new Error(
+            "ضع رابط Render الخاص بالسيرفر في بداية app.js"
+        );
+    }
 
-/* =====================================================
-   API
-===================================================== */
-
-async function api(url, options = {}) {
+    const token =
+        getToken();
 
     const headers = {
-
-        "Content-Type": "application/json",
-
         ...(options.headers || {})
-
     };
 
+    if (
+        options.body &&
+        typeof options.body === "string" &&
+        !headers["Content-Type"]
+    ) {
 
-    headers.Authorization =
-        `Bearer ${token}`;
-
-
-    const response =
-        await fetch(
-            API + url,
-            {
-                ...options,
-                headers
-            }
-        );
-
-
-    const data =
-        await response
-            .json()
-            .catch(() => ({}));
-
-
-    if (response.status === 401) {
-
-        logout();
-
-        throw new Error(
-            "انتهت جلسة تسجيل الدخول"
-        );
-
+        headers["Content-Type"] =
+            "application/json";
     }
 
+    if (token) {
 
-    if (!response.ok) {
-
-        throw new Error(
-            data.error ||
-            "حدث خطأ في السيرفر"
-        );
-
+        headers["Authorization"] =
+            `Bearer ${token}`;
     }
 
-
-    return data;
-
-}
-
-
-/* =====================================================
-   USER
-===================================================== */
-
-async function loadUser() {
+    let response;
 
     try {
 
-        const data =
-            await api("/me");
-
-
-        const user =
-            data.user;
-
-
-        $("userName").textContent =
-            user.name;
-
-
-        $("avatar").textContent =
-            user.name
-                .charAt(0)
-                .toUpperCase();
-
-
-        $("modalUserName").textContent =
-            user.name;
-
-
-        $("modalUserEmail").textContent =
-            user.email;
-
-
-        localStorage.setItem(
-            "edrak_user",
-            JSON.stringify(user)
-        );
-
-
-    } catch (error) {
-
-        console.error(error);
-
-    }
-
-}
-
-
-/* =====================================================
-   CHATS
-===================================================== */
-
-async function loadChats() {
-
-    try {
-
-        const data =
-            await api("/chats");
-
-
-        allChats =
-            data.chats || [];
-
-
-        renderChatList();
-
+        response =
+            await fetch(
+                `${baseURL}${endpoint}`,
+                {
+                    ...options,
+                    headers
+                }
+            );
 
     } catch (error) {
 
         console.error(
-            "Chats:",
+            "NETWORK ERROR:",
             error
         );
 
+        throw new Error(
+            "مش قادر أوصل للسيرفر. تأكد إن Render شغال والرابط صحيح."
+        );
     }
 
-}
+    const rawText =
+        await response.text();
 
+    let data;
 
-function renderChatList() {
+    try {
 
-    const list =
-        $("chatList");
+        data =
+            rawText
+                ? JSON.parse(rawText)
+                : {};
 
+    } catch (error) {
 
-    list.innerHTML = "";
-
-
-    if (!allChats.length) {
-
-        list.innerHTML = `
-            <div
-                style="
-                    opacity:.5;
-                    text-align:center;
-                    padding:20px;
-                    font-size:13px;
-                "
-            >
-                لا توجد محادثات بعد
-            </div>
-        `;
-
-        return;
-
-    }
-
-
-    allChats.forEach(chat => {
-
-        const item =
-            document.createElement("div");
-
-
-        item.className =
-            "chat-item";
-
+        console.error(
+            "INVALID JSON:",
+            rawText
+        );
 
         if (
-            Number(chat.id) ===
-            Number(currentChatId)
+            rawText.includes("<html") ||
+            rawText.includes("<HTML") ||
+            rawText.includes("<!DOCTYPE")
         ) {
 
-            item.classList.add("active");
-
+            throw new Error(
+                "السيرفر رجّع HTML بدل JSON. تأكد إن API_URL هو رابط Render وليس رابط GitHub Pages."
+            );
         }
 
-
-        item.innerHTML = `
-
-            <span
-                class="chat-title"
-            >
-                ${escapeHTML(chat.title)}
-            </span>
-
-            <span
-                class="chat-actions"
-            >
-
-                <button
-                    class="chat-edit"
-                    title="تعديل"
-                >
-                    ✎
-                </button>
-
-                <button
-                    class="chat-delete"
-                    title="حذف"
-                >
-                    ×
-                </button>
-
-            </span>
-
-        `;
-
-
-        item.addEventListener(
-            "click",
-            () => openChat(chat.id)
+        throw new Error(
+            "رد السيرفر غير صالح."
         );
+    }
 
+    if (!response.ok) {
 
-        const editBtn =
-            item.querySelector(
-                ".chat-edit"
+        if (
+            response.status === 401
+        ) {
+
+            localStorage.removeItem(
+                TOKEN_KEY
             );
 
-
-        const deleteBtn =
-            item.querySelector(
-                ".chat-delete"
+            localStorage.removeItem(
+                USER_KEY
             );
 
+            if (
+                !location.pathname.endsWith(
+                    "login.html"
+                ) &&
+                !location.pathname.endsWith(
+                    "register.html"
+                )
+            ) {
 
-        editBtn.addEventListener(
-            "click",
-            event => {
-
-                event.stopPropagation();
-
-                renameChat(chat);
-
+                location.href =
+                    "login.html";
             }
+        }
+
+        throw new Error(
+            data?.error ||
+            `حدث خطأ من السيرفر (${response.status})`
         );
+    }
 
-
-        deleteBtn.addEventListener(
-            "click",
-            event => {
-
-                event.stopPropagation();
-
-                deleteChat(chat.id);
-
-            }
-        );
-
-
-        list.appendChild(item);
-
-    });
-
+    return data;
 }
 
 
-/* =====================================================
-   CREATE CHAT
-===================================================== */
+/* =========================================================
+   USER
+   ========================================================= */
 
-async function createChat() {
+async function loadCurrentUser() {
+
+    if (!getToken()) {
+        return null;
+    }
+
+    const data =
+        await apiFetch(
+            "/api/me"
+        );
+
+    currentUser =
+        data.user || null;
+
+    if (currentUser) {
+
+        localStorage.setItem(
+            USER_KEY,
+            JSON.stringify(currentUser)
+        );
+
+        updateUserUI();
+    }
+
+    return currentUser;
+}
+
+
+function loadSavedUser() {
 
     try {
 
-        const data =
-            await api(
-                "/chats",
-                {
-                    method: "POST",
-
-                    body: JSON.stringify({
-
-                        title:
-                            "محادثة جديدة"
-
-                    })
-                }
+        const raw =
+            localStorage.getItem(
+                USER_KEY
             );
 
+        if (!raw) {
+            return null;
+        }
 
-        currentChatId =
-            data.chat.id;
+        currentUser =
+            JSON.parse(raw);
 
+        updateUserUI();
 
-        currentMessages = [];
+        return currentUser;
 
+    } catch {
 
-        $("messages").innerHTML = "";
-
-
-        $("welcome").style.display =
-            "none";
-
-
-        $("messages")
-            .classList.add("active");
-
-
-        await loadChats();
-
-
-        closeSidebarOnMobile();
-
-
-        return true;
-
-
-    } catch (error) {
-
-        alert(error.message);
-
-        return false;
-
+        return null;
     }
-
 }
 
 
-/* =====================================================
-   OPEN CHAT
-===================================================== */
+function updateUserUI() {
 
-async function openChat(id) {
-
-    try {
-
-        const data =
-            await api(
-                `/chats/${id}`
-            );
-
-
-        currentChatId =
-            id;
-
-
-        currentMessages =
-            data.messages || [];
-
-
-        $("welcome").style.display =
-            "none";
-
-
-        const messages =
-            $("messages");
-
-
-        messages.innerHTML = "";
-
-
-        currentMessages.forEach(
-            message => {
-
-                renderMessage(
-                    message.role,
-                    message.content,
-                    false
-                );
-
-            }
-        );
-
-
-        messages.classList.add(
-            "active"
-        );
-
-
-        renderChatList();
-
-
-        scrollMessagesToBottom();
-
-
-        closeSidebarOnMobile();
-
-
-    } catch (error) {
-
-        alert(error.message);
-
+    if (!currentUser) {
+        return;
     }
-
-}
-
-
-/* =====================================================
-   NEW CHAT BUTTON
-===================================================== */
-
-async function newChat() {
-
-    currentChatId = null;
-
-    currentMessages = [];
-
-
-    $("messages").innerHTML = "";
-
-
-    $("welcome").style.display =
-        "";
-
-
-    $("messages")
-        .classList.remove(
-            "active"
-        );
-
-
-    renderChatList();
-
-
-    $("messageInput").focus();
-
-}
-
-
-/* =====================================================
-   SHOW CHAT
-===================================================== */
-
-function showChat() {
-
-    $("welcome").style.display =
-        "none";
-
-
-    $("messages")
-        .classList.add(
-            "active"
-        );
-
-}
-
-
-/* =====================================================
-   RENDER MESSAGE
-===================================================== */
-
-function renderMessage(
-    role,
-    content,
-    scroll = true
-) {
-
-    const wrapper =
-        document.createElement("div");
-
-
-    wrapper.className =
-        `message ${
-            role === "user"
-                ? "user"
-                : "ai"
-        }`;
-
-
-    const avatar =
-        role === "user"
-            ? (
-                $("avatar")?.textContent ||
-                "Y"
-            )
-            : "E";
-
 
     const name =
-        role === "user"
-            ? "أنت"
-            : "Edrak";
+        currentUser.name ||
+        currentUser.username ||
+        "مستخدم";
 
+    const email =
+        currentUser.email ||
+        "";
 
-    wrapper.innerHTML = `
-
-        <div class="message-avatar">
-            ${escapeHTML(avatar)}
-        </div>
-
-        <div class="message-body">
-
-            <div class="message-name">
-                ${name}
-            </div>
-
-            <div class="message-content">
-                ${formatText(content)}
-            </div>
-
-        </div>
-
-    `;
-
-
-    $("messages")
-        .appendChild(wrapper);
-
-
-    if (scroll) {
-
-        scrollMessagesToBottom();
-
-    }
-
-}
-
-
-function scrollMessagesToBottom() {
-
-    const messages =
-        $("messages");
-
-
-    if (!messages) return;
-
-
-    requestAnimationFrame(() => {
-
-        messages.scrollTo({
-
-            top:
-                messages.scrollHeight,
-
-            behavior:
-                "smooth"
-
-        });
-
-    });
-
-}
-
-
-/* =====================================================
-   SEND MESSAGE
-===================================================== */
-
-async function sendMessage() {
-
-    const input =
-        $("messageInput");
-
-
-    const message =
-        input.value.trim();
-
-
-    if (!message) {
-
-        return;
-
-    }
-
-
-    /* إنشاء شات تلقائي */
-
-    if (!currentChatId) {
-
-        const created =
-            await createChat();
-
-
-        if (!created) {
-
-            return;
-
+    $all(
+        "#userName",
+        "#profileName",
+        ".user-name",
+        ".profile-name"
+    ).forEach(
+        element => {
+            element.textContent =
+                name;
         }
-
-    }
-
-
-    input.value = "";
-
-    autoResizeInput();
-
-
-    showChat();
-
-
-    /* رسالة المستخدم */
-
-    renderMessage(
-        "user",
-        message
     );
 
+    $all(
+        "#userEmail",
+        "#profileEmail",
+        ".user-email",
+        ".profile-email"
+    ).forEach(
+        element => {
+            element.textContent =
+                email;
+        }
+    );
 
-    currentMessages.push({
+    const initials =
+        name
+            .trim()
+            .split(/\s+/)
+            .slice(0, 2)
+            .map(
+                word =>
+                    word.charAt(0)
+            )
+            .join("")
+            .toUpperCase();
 
-        role: "user",
+    $all(
+        "#userAvatar",
+        ".user-avatar",
+        ".profile-avatar"
+    ).forEach(
+        element => {
 
-        content: message
-
-    });
-
-
-    try {
-
-        /* حفظ رسالة المستخدم */
-
-        await api(
-            `/chats/${currentChatId}/messages`,
-            {
-
-                method: "POST",
-
-                body:
-                    JSON.stringify({
-
-                        role:
-                            "user",
-
-                        content:
-                            message
-
-                    })
-
+            if (
+                element.tagName !== "IMG"
+            ) {
+                element.textContent =
+                    initials || "E";
             }
+        }
+    );
+}
+
+
+/* =========================================================
+   CHATS
+   ========================================================= */
+
+async function loadChats() {
+
+    const data =
+        await apiFetch(
+            "/api/chats"
         );
 
+    chats =
+        Array.isArray(data.chats)
+            ? data.chats
+            : [];
 
-        /* Typing */
+    renderChats();
 
-        const typing =
-            document.createElement("div");
-
-
-        typing.className =
-            "message ai";
-
-
-        typing.id =
-            "typingMessage";
+    return chats;
+}
 
 
-        typing.innerHTML = `
+function renderChats() {
 
-            <div class="message-avatar">
-                E
-            </div>
+    const containers =
+        $all(
+            "#chatList",
+            "#conversationList",
+            "#conversations",
+            ".chat-list",
+            ".conversation-list"
+        );
 
-            <div class="message-body">
+    if (!containers.length) {
+        return;
+    }
 
-                <div class="message-name">
-                    Edrak
-                </div>
+    containers.forEach(
+        container => {
 
-                <div class="typing">
-                    Edrak بيكتب...
-                </div>
+            container.innerHTML = "";
 
-            </div>
+            if (!chats.length) {
 
-        `;
+                container.innerHTML = `
+                    <div class="empty-chats">
+                        <div class="empty-chat-icon">💬</div>
+                        <span>مفيش محادثات لسه</span>
+                    </div>
+                `;
 
+                return;
+            }
 
-        $("messages")
-            .appendChild(typing);
+            chats.forEach(
+                chat => {
 
+                    const item =
+                        document.createElement(
+                            "div"
+                        );
 
-        scrollMessagesToBottom();
+                    item.className =
+                        "chat-item";
 
+                    if (
+                        Number(chat.id) ===
+                        Number(currentChatId)
+                    ) {
 
-        /* AI */
+                        item.classList.add(
+                            "active"
+                        );
+                    }
 
-        const data =
-            await api(
-                "/chat",
-                {
+                    item.dataset.chatId =
+                        chat.id;
 
-                    method: "POST",
+                    const title =
+                        escapeHTML(
+                            chat.title ||
+                            "محادثة جديدة"
+                        );
 
-                    body:
-                        JSON.stringify({
+                    item.innerHTML = `
+                        <div class="chat-item-main">
+                            <span class="chat-item-icon">
+                                💬
+                            </span>
 
-                            message,
+                            <span class="chat-item-title">
+                                ${title}
+                            </span>
+                        </div>
 
-                            history:
-                                currentMessages
+                        <button
+                            type="button"
+                            class="chat-delete"
+                            data-delete-chat="${chat.id}"
+                            title="حذف"
+                        >
+                            ×
+                        </button>
+                    `;
 
-                        })
+                    item.addEventListener(
+                        "click",
+                        event => {
 
+                            if (
+                                event.target.closest(
+                                    "[data-delete-chat]"
+                                )
+                            ) {
+                                return;
+                            }
+
+                            openChat(
+                                chat.id
+                            );
+                        }
+                    );
+
+                    const deleteButton =
+                        item.querySelector(
+                            "[data-delete-chat]"
+                        );
+
+                    if (deleteButton) {
+
+                        deleteButton.addEventListener(
+                            "click",
+                            async event => {
+
+                                event.stopPropagation();
+
+                                await deleteChat(
+                                    chat.id
+                                );
+                            }
+                        );
+                    }
+
+                    container.appendChild(
+                        item
+                    );
                 }
             );
-
-
-        typing.remove();
-
-
-        const answer =
-            data.answer ||
-            "معرفتش أجيب رد دلوقتي.";
-
-
-        renderMessage(
-            "assistant",
-            answer
-        );
-
-
-        currentMessages.push({
-
-            role:
-                "assistant",
-
-            content:
-                answer
-
-        });
-
-
-        /* حفظ رد AI */
-
-        await api(
-            `/chats/${currentChatId}/messages`,
-            {
-
-                method: "POST",
-
-                body:
-                    JSON.stringify({
-
-                        role:
-                            "assistant",
-
-                        content:
-                            answer
-
-                    })
-
-            }
-        );
-
-
-        await loadChats();
-
-
-    } catch (error) {
-
-        const typing =
-            $("typingMessage");
-
-
-        if (typing) {
-
-            typing.remove();
-
         }
-
-
-        renderMessage(
-            "assistant",
-            "حصلت مشكلة: " +
-            error.message
-        );
-
-    }
-
+    );
 }
 
 
-/* =====================================================
-   RENAME CHAT
-===================================================== */
+/* =========================================================
+   CREATE CHAT
+   ========================================================= */
 
-async function renameChat(chat) {
+async function createChat(
+    title = "محادثة جديدة"
+) {
 
-    const newTitle =
-        prompt(
-            "اكتب اسم المحادثة الجديد:",
-            chat.title
+    const data =
+        await apiFetch(
+            "/api/chats",
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    title
+                })
+            }
         );
 
+    const chat =
+        data.chat;
 
-    if (
-        newTitle === null ||
-        !newTitle.trim()
-    ) {
+    chats.unshift(
+        chat
+    );
 
-        return;
+    currentChatId =
+        Number(chat.id);
 
-    }
+    localStorage.setItem(
+        CHAT_KEY,
+        String(currentChatId)
+    );
 
+    renderChats();
+
+    return chat;
+}
+
+
+/* =========================================================
+   OPEN CHAT
+   ========================================================= */
+
+async function openChat(
+    chatId
+) {
 
     try {
 
-        await api(
-            `/chats/${chat.id}`,
-            {
+        currentChatId =
+            Number(chatId);
 
-                method: "PATCH",
-
-                body:
-                    JSON.stringify({
-
-                        title:
-                            newTitle.trim()
-
-                    })
-
-            }
+        localStorage.setItem(
+            CHAT_KEY,
+            String(currentChatId)
         );
 
+        renderChats();
 
-        await loadChats();
+        const data =
+            await apiFetch(
+                `/api/chats/${currentChatId}`
+            );
 
+        currentMessages =
+            Array.isArray(data.messages)
+                ? data.messages
+                : [];
+
+        renderMessages();
+
+        updateChatTitle(
+            data.chat?.title ||
+            "محادثة جديدة"
+        );
 
     } catch (error) {
 
-        alert(error.message);
+        console.error(
+            "OPEN CHAT ERROR:",
+            error
+        );
 
+        showError(
+            error.message
+        );
     }
-
 }
 
 
-/* =====================================================
+/* =========================================================
    DELETE CHAT
-===================================================== */
+   ========================================================= */
 
-async function deleteChat(id) {
+async function deleteChat(
+    chatId
+) {
 
     const confirmed =
         confirm(
-            "هل تريد حذف هذه المحادثة؟"
+            "هل أنت متأكد إنك عايز تحذف المحادثة؟"
         );
 
-
     if (!confirmed) {
-
         return;
-
     }
-
 
     try {
 
-        await api(
-            `/chats/${id}`,
+        await apiFetch(
+            `/api/chats/${chatId}`,
             {
                 method: "DELETE"
             }
         );
 
+        chats =
+            chats.filter(
+                chat =>
+                    Number(chat.id) !==
+                    Number(chatId)
+            );
 
         if (
             Number(currentChatId) ===
-            Number(id)
+            Number(chatId)
         ) {
 
-            currentChatId = null;
+            currentChatId =
+                null;
 
-            currentMessages = [];
+            currentMessages =
+                [];
 
+            localStorage.removeItem(
+                CHAT_KEY
+            );
 
-            $("messages").innerHTML = "";
-
-
-            $("welcome").style.display =
-                "";
-
-
-            $("messages")
-                .classList.remove(
-                    "active"
-                );
-
+            renderEmptyState();
         }
 
-
-        await loadChats();
-
+        renderChats();
 
     } catch (error) {
 
-        alert(error.message);
-
+        showError(
+            error.message
+        );
     }
-
 }
 
 
-/* =====================================================
-   PRO
-===================================================== */
+/* =========================================================
+   MESSAGES
+   ========================================================= */
 
-function openPro() {
+function renderMessages() {
 
-    $("proModal")
-        .classList.remove(
-            "hidden"
+    const containers =
+        $all(
+            "#messages",
+            "#messageList",
+            ".messages",
+            ".chat-messages"
         );
 
-}
-
-
-function closeModal(id) {
-
-    const modal =
-        $(id);
-
-
-    if (modal) {
-
-        modal.classList.add(
-            "hidden"
-        );
-
+    if (!containers.length) {
+        return;
     }
 
-}
+    containers.forEach(
+        container => {
 
+            container.innerHTML = "";
 
-/* =====================================================
-   PRO BUTTON
-===================================================== */
+            if (!currentMessages.length) {
+                return;
+            }
 
-$("proBtn")
-    .addEventListener(
-        "click",
-        openPro
-    );
+            currentMessages.forEach(
+                message => {
 
-
-$("proSubscribe")
-    .addEventListener(
-        "click",
-        () => {
-
-            alert(
-                "الاشتراك في Edrak PRO سيتم تفعيله قريباً 🚀"
+                    renderMessage(
+                        message.role,
+                        message.content,
+                        container
+                    );
+                }
             );
 
+            scrollMessages(
+                container
+            );
         }
     );
+}
 
 
-/* =====================================================
-   PROFILE
-===================================================== */
+function renderMessage(
+    role,
+    content,
+    container = null
+) {
 
-$("profileBtn")
-    .addEventListener(
-        "click",
-        () => {
-
-            $("profileModal")
-                .classList.remove(
-                    "hidden"
-                );
-
-        }
-    );
-
-
-$("avatar")
-    .addEventListener(
-        "click",
-        () => {
-
-            $("profileModal")
-                .classList.remove(
-                    "hidden"
-                );
-
-        }
-    );
-
-
-/* =====================================================
-   SETTINGS
-===================================================== */
-
-$("settingsBtn")
-    .addEventListener(
-        "click",
-        () => {
-
-            $("settingsModal")
-                .classList.remove(
-                    "hidden"
-                );
-
-        }
-    );
-
-
-/* =====================================================
-   CLOSE MODALS
-===================================================== */
-
-document
-    .querySelectorAll(
-        "[data-close]"
-    )
-    .forEach(button => {
-
-        button.addEventListener(
-            "click",
-            () => {
-
-                closeModal(
-                    button.dataset.close
-                );
-
-            }
+    const target =
+        container ||
+        $(
+            "#messages",
+            "#messageList",
+            ".messages",
+            ".chat-messages"
         );
 
-    });
+    if (!target) {
+        return;
+    }
+
+    const row =
+        document.createElement(
+            "div"
+        );
+
+    row.className =
+        `message-row ${role}`;
+
+    const bubble =
+        document.createElement(
+            "div"
+        );
+
+    bubble.className =
+        "message-bubble";
+
+    bubble.innerHTML =
+        formatMessage(
+            content
+        );
+
+    row.appendChild(
+        bubble
+    );
+
+    target.appendChild(
+        row
+    );
+}
 
 
-/* الضغط خارج النافذة */
+/* =========================================================
+   EMPTY STATE
+   ========================================================= */
 
-document
-    .querySelectorAll(".modal")
-    .forEach(modal => {
+function renderEmptyState() {
 
-        modal.addEventListener(
-            "click",
+    currentMessages =
+        [];
+
+    const containers =
+        $all(
+            "#messages",
+            "#messageList",
+            ".messages",
+            ".chat-messages"
+        );
+
+    containers.forEach(
+        container => {
+
+            container.innerHTML = `
+                <div class="empty-chat-state">
+                    <div class="empty-logo">E</div>
+
+                    <h2>
+                        أهلاً بيك في Edrak AI
+                    </h2>
+
+                    <p>
+                        اكتب أي سؤال وابدأ المحادثة.
+                    </p>
+                </div>
+            `;
+        }
+    );
+
+    updateChatTitle(
+        "محادثة جديدة"
+    );
+
+    renderChats();
+}
+
+
+/* =========================================================
+   TYPING
+   ========================================================= */
+
+function showTyping() {
+
+    const container =
+        $(
+            "#messages",
+            "#messageList",
+            ".messages",
+            ".chat-messages"
+        );
+
+    if (!container) {
+        return;
+    }
+
+    removeTyping();
+
+    const row =
+        document.createElement(
+            "div"
+        );
+
+    row.id =
+        "edrakTyping";
+
+    row.className =
+        "message-row assistant typing-row";
+
+    row.innerHTML = `
+        <div class="message-bubble typing-bubble">
+
+            <span>
+                Edrak بيكتب
+            </span>
+
+            <span class="typing-dots">
+                <i></i>
+                <i></i>
+                <i></i>
+            </span>
+
+        </div>
+    `;
+
+    container.appendChild(
+        row
+    );
+
+    scrollMessages(
+        container
+    );
+}
+
+
+function removeTyping() {
+
+    const typing =
+        document.getElementById(
+            "edrakTyping"
+        );
+
+    if (typing) {
+        typing.remove();
+    }
+}
+
+
+/* =========================================================
+   SAVE MESSAGE
+   ========================================================= */
+
+async function saveMessage(
+    role,
+    content
+) {
+
+    if (!currentChatId) {
+        return null;
+    }
+
+    return apiFetch(
+        `/api/chats/${currentChatId}/messages`,
+        {
+            method: "POST",
+            body: JSON.stringify({
+                role,
+                content
+            })
+        }
+    );
+}
+
+
+/* =========================================================
+   SEND MESSAGE
+   ========================================================= */
+
+async function sendMessage(
+    customMessage = null
+) {
+
+    if (isSending) {
+        return;
+    }
+
+    const input =
+        $(
+            "#messageInput",
+            "#promptInput",
+            "#chatInput",
+            "textarea[name='message']",
+            "input[name='message']"
+        );
+
+    const sendButton =
+        $(
+            "#sendBtn",
+            "#sendButton",
+            ".send-btn",
+            "[data-send]"
+        );
+
+    const message =
+        customMessage !== null
+            ? String(
+                customMessage
+            ).trim()
+            : String(
+                input?.value || ""
+            ).trim();
+
+    if (!message) {
+        return;
+    }
+
+    isSending =
+        true;
+
+    if (input) {
+
+        input.value =
+            "";
+
+        autoResizeTextarea(
+            input
+        );
+    }
+
+    if (sendButton) {
+
+        sendButton.disabled =
+            true;
+
+        sendButton.dataset.oldText =
+            sendButton.textContent;
+
+        sendButton.textContent =
+            "جارٍ الإرسال...";
+    }
+
+    try {
+
+        /*
+          إنشاء محادثة تلقائيًا
+          أول مرة المستخدم يرسل.
+        */
+
+        if (!currentChatId) {
+
+            const title =
+                message.length > 45
+                    ? `${message.slice(0, 45)}...`
+                    : message;
+
+            await createChat(
+                title
+            );
+        }
+
+        /*
+          عرض رسالة المستخدم.
+        */
+
+        currentMessages.push({
+            role: "user",
+            content: message
+        });
+
+        renderMessages();
+
+        /*
+          حفظ رسالة المستخدم.
+        */
+
+        await saveMessage(
+            "user",
+            message
+        );
+
+        /*
+          إظهار الكتابة.
+        */
+
+        showTyping();
+
+        /*
+          تجهيز التاريخ.
+        */
+
+        const history =
+            currentMessages
+                .slice(-20)
+                .filter(
+                    item =>
+                        item &&
+                        (
+                            item.role ===
+                                "user" ||
+                            item.role ===
+                                "assistant"
+                        )
+                )
+                .map(
+                    item => ({
+                        role:
+                            item.role,
+                        content:
+                            item.content
+                    })
+                );
+
+        /*
+          استدعاء Backend
+          والـBackend هو اللي بيكلم Groq.
+        */
+
+        const data =
+            await apiFetch(
+                "/api/chat",
+                {
+                    method: "POST",
+
+                    body:
+                        JSON.stringify({
+                            message,
+                            history
+                        })
+                }
+            );
+
+        removeTyping();
+
+        const answer =
+            data.answer ||
+            "معلش، مقدرتش أطلع إجابة.";
+
+        /*
+          إضافة رد المساعد.
+        */
+
+        currentMessages.push({
+            role: "assistant",
+            content: answer
+        });
+
+        renderMessages();
+
+        /*
+          حفظ الرد.
+        */
+
+        await saveMessage(
+            "assistant",
+            answer
+        );
+
+        /*
+          تحديث المحادثات.
+        */
+
+        await loadChats();
+
+    } catch (error) {
+
+        removeTyping();
+
+        console.error(
+            "SEND MESSAGE ERROR:",
+            error
+        );
+
+        showError(
+            error.message
+        );
+
+        /*
+          رجع الرسالة للـinput.
+        */
+
+        if (
+            input &&
+            !input.value
+        ) {
+            input.value =
+                message;
+
+            autoResizeTextarea(
+                input
+            );
+        }
+
+    } finally {
+
+        isSending =
+            false;
+
+        if (sendButton) {
+
+            sendButton.disabled =
+                false;
+
+            sendButton.textContent =
+                sendButton.dataset.oldText ||
+                "إرسال";
+        }
+
+        if (input) {
+            input.focus();
+        }
+    }
+}
+
+
+/* =========================================================
+   NEW CHAT
+   ========================================================= */
+
+function startNewChat() {
+
+    currentChatId =
+        null;
+
+    currentMessages =
+        [];
+
+    localStorage.removeItem(
+        CHAT_KEY
+    );
+
+    renderEmptyState();
+
+    const input =
+        $(
+            "#messageInput",
+            "#promptInput",
+            "#chatInput"
+        );
+
+    if (input) {
+
+        input.value =
+            "";
+
+        input.focus();
+    }
+}
+
+
+/* =========================================================
+   CHAT TITLE
+   ========================================================= */
+
+function updateChatTitle(
+    title
+) {
+
+    const finalTitle =
+        title ||
+        "محادثة جديدة";
+
+    $all(
+        "#chatTitle",
+        ".chat-title",
+        "[data-chat-title]"
+    ).forEach(
+        element => {
+
+            element.textContent =
+                finalTitle;
+        }
+    );
+}
+
+
+/* =========================================================
+   COMPOSER
+   ========================================================= */
+
+function setupComposer() {
+
+    const input =
+        $(
+            "#messageInput",
+            "#promptInput",
+            "#chatInput",
+            "textarea[name='message']"
+        );
+
+    const sendButton =
+        $(
+            "#sendBtn",
+            "#sendButton",
+            ".send-btn",
+            "[data-send]"
+        );
+
+    if (input) {
+
+        input.addEventListener(
+            "keydown",
             event => {
 
                 if (
-                    event.target ===
-                    modal
+                    event.key ===
+                        "Enter" &&
+                    !event.shiftKey
                 ) {
 
-                    modal.classList.add(
-                        "hidden"
-                    );
+                    event.preventDefault();
 
+                    sendMessage();
                 }
-
             }
         );
 
-    });
-
-
-/* =====================================================
-   SEARCH
-===================================================== */
-
-$("searchBtn")
-    .addEventListener(
-        "click",
-        () => {
-
-            $("searchModal")
-                .classList.remove(
-                    "hidden"
-                );
-
-
-            $("searchInput").value =
-                "";
-
-
-            $("searchResults")
-                .innerHTML =
-                "<div style='opacity:.6'>اكتب للبحث...</div>";
-
-
-            $("searchInput")
-                .focus();
-
-        }
-    );
-
-
-$("searchInput")
-    .addEventListener(
-        "input",
-        function () {
-
-            const query =
-                this.value
-                    .trim()
-                    .toLowerCase();
-
-
-            const results =
-                $("searchResults");
-
-
-            if (!query) {
-
-                results.innerHTML =
-                    "<div style='opacity:.6'>اكتب للبحث...</div>";
-
-                return;
-
-            }
-
-
-            const filtered =
-                allChats.filter(
-                    chat =>
-                        chat.title
-                            .toLowerCase()
-                            .includes(query)
-                );
-
-
-            if (!filtered.length) {
-
-                results.innerHTML =
-                    "<div style='opacity:.6'>مفيش محادثات مطابقة.</div>";
-
-                return;
-
-            }
-
-
-            results.innerHTML =
-                "";
-
-
-            filtered.forEach(chat => {
-
-                const item =
-                    document.createElement(
-                        "button"
-                    );
-
-
-                item.style.cssText = `
-                    width:100%;
-                    text-align:right;
-                    padding:12px;
-                    margin-bottom:8px;
-                    border:0;
-                    border-radius:12px;
-                    cursor:pointer;
-                    font-family:inherit;
-                `;
-
-
-                item.textContent =
-                    chat.title;
-
-
-                item.addEventListener(
-                    "click",
-                    () => {
-
-                        closeModal(
-                            "searchModal"
-                        );
-
-                        openChat(
-                            chat.id
-                        );
-
-                    }
-                );
-
-
-                results.appendChild(
-                    item
-                );
-
-            });
-
-        }
-    );
-
-
-/* =====================================================
-   QUICK PROMPTS
-===================================================== */
-
-document
-    .querySelectorAll(
-        ".quick-card"
-    )
-    .forEach(card => {
-
-        card.addEventListener(
-            "click",
+        input.addEventListener(
+            "input",
             () => {
 
-                $("messageInput").value =
-                    card.dataset.prompt;
-
-
-                autoResizeInput();
-
-
-                $("messageInput")
-                    .focus();
-
+                autoResizeTextarea(
+                    input
+                );
             }
         );
+    }
 
-    });
+    if (sendButton) {
 
-
-/* =====================================================
-   SEND BUTTON
-===================================================== */
-
-$("sendBtn")
-    .addEventListener(
-        "click",
-        sendMessage
-    );
-
-
-/* =====================================================
-   ENTER TO SEND
-===================================================== */
-
-$("messageInput")
-    .addEventListener(
-        "keydown",
-        event => {
-
-            if (
-                event.key === "Enter" &&
-                !event.shiftKey
-            ) {
+        sendButton.addEventListener(
+            "click",
+            event => {
 
                 event.preventDefault();
 
                 sendMessage();
-
             }
-
-        }
-    );
-
-
-/* =====================================================
-   AUTO RESIZE TEXTAREA
-===================================================== */
-
-$("messageInput")
-    .addEventListener(
-        "input",
-        autoResizeInput
-    );
-
-
-function autoResizeInput() {
-
-    const input =
-        $("messageInput");
-
-
-    input.style.height =
-        "auto";
-
-
-    input.style.height =
-        Math.min(
-            input.scrollHeight,
-            140
-        ) + "px";
-
-}
-
-
-/* =====================================================
-   NEW CHAT
-===================================================== */
-
-$("newChatBtn")
-    .addEventListener(
-        "click",
-        newChat
-    );
-
-
-/* =====================================================
-   LOGOUT
-===================================================== */
-
-$("logoutBtn")
-    .addEventListener(
-        "click",
-        logout
-    );
-
-
-function logout() {
-
-    localStorage.removeItem(
-        "edrak_token"
-    );
-
-
-    localStorage.removeItem(
-        "edrak_user"
-    );
-
-
-    window.location.href =
-        "login.html";
-
-}
-
-
-/* =====================================================
-   MOBILE MENU
-===================================================== */
-
-$("mobileMenu")
-    .addEventListener(
-        "click",
-        () => {
-
-            $("sidebar")
-                .classList.toggle(
-                    "open"
-                );
-
-        }
-    );
-
-
-function closeSidebarOnMobile() {
-
-    if (
-        window.innerWidth <= 900
-    ) {
-
-        $("sidebar")
-            .classList.remove(
-                "open"
-            );
-
+        );
     }
-
 }
 
 
-/* =====================================================
-   ATTACHMENT
-===================================================== */
+/* =========================================================
+   NEW CHAT BUTTON
+   ========================================================= */
 
-$("attachBtn")
-    .addEventListener(
-        "click",
-        () => {
+function setupNewChatButton() {
 
-            $("fileInput").click();
+    $all(
+        "#newChatBtn",
+        "#newChat",
+        ".new-chat-btn",
+        "[data-new-chat]"
+    ).forEach(
+        button => {
 
+            button.addEventListener(
+                "click",
+                event => {
+
+                    event.preventDefault();
+
+                    startNewChat();
+                }
+            );
         }
     );
+}
 
 
-$("fileInput")
-    .addEventListener(
-        "change",
-        event => {
+/* =========================================================
+   LOGOUT
+   ========================================================= */
 
-            const file =
-                event.target.files[0];
+function setupLogout() {
 
+    $all(
+        "#logoutBtn",
+        ".logout-btn",
+        "[data-logout]"
+    ).forEach(
+        button => {
 
-            if (!file) {
+            button.addEventListener(
+                "click",
+                event => {
 
-                return;
+                    event.preventDefault();
 
-            }
-
-
-            const allowed =
-                [
-                    "image/",
-                    "text/"
-                ];
-
-
-            const isAllowed =
-                allowed.some(
-                    type =>
-                        file.type.startsWith(
-                            type
-                        )
-                );
-
-
-            if (!isAllowed) {
-
-                alert(
-                    "نوع الملف ده مش مدعوم حالياً."
-                );
-
-                event.target.value =
-                    "";
-
-                return;
-
-            }
-
-
-            $("messageInput").value +=
-                `\n[ملف مرفق: ${file.name}]`;
-
-
-            $("messageInput").focus();
-
+                    logoutUser();
+                }
+            );
         }
     );
+}
 
 
-/* =====================================================
-   VOICE
-===================================================== */
+/* =========================================================
+   VOICE INPUT
+   ========================================================= */
 
-let recognition = null;
+function setupVoice() {
 
+    const buttons =
+        $all(
+            "#voiceBtn",
+            ".voice-btn",
+            "[data-voice]"
+        );
 
-$("voiceBtn")
-    .addEventListener(
-        "click",
-        startVoice
-    );
-
-
-function startVoice() {
+    if (!buttons.length) {
+        return;
+    }
 
     const SpeechRecognition =
         window.SpeechRecognition ||
         window.webkitSpeechRecognition;
 
+    buttons.forEach(
+        button => {
 
-    if (!SpeechRecognition) {
+            button.addEventListener(
+                "click",
+                () => {
+
+                    if (!SpeechRecognition) {
+
+                        alert(
+                            "المتصفح ده مش بيدعم إدخال الصوت."
+                        );
+
+                        return;
+                    }
+
+                    const recognition =
+                        new SpeechRecognition();
+
+                    recognition.lang =
+                        "ar-EG";
+
+                    recognition.interimResults =
+                        false;
+
+                    recognition.maxAlternatives =
+                        1;
+
+                    recognition.onstart =
+                        () => {
+
+                            button.classList.add(
+                                "recording"
+                            );
+                        };
+
+                    recognition.onend =
+                        () => {
+
+                            button.classList.remove(
+                                "recording"
+                            );
+                        };
+
+                    recognition.onerror =
+                        error => {
+
+                            console.error(
+                                "VOICE ERROR:",
+                                error
+                            );
+
+                            button.classList.remove(
+                                "recording"
+                            );
+                        };
+
+                    recognition.onresult =
+                        event => {
+
+                            const result =
+                                event.results[0];
+
+                            const text =
+                                result[0]
+                                    .transcript;
+
+                            const input =
+                                $(
+                                    "#messageInput",
+                                    "#promptInput",
+                                    "#chatInput"
+                                );
+
+                            if (input) {
+
+                                input.value =
+                                    text;
+
+                                autoResizeTextarea(
+                                    input
+                                );
+
+                                input.focus();
+                            }
+                        };
+
+                    recognition.start();
+                }
+            );
+        }
+    );
+}
+
+
+/* =========================================================
+   SPEECH OUTPUT
+   ========================================================= */
+
+function speakText(
+    text
+) {
+
+    if (
+        !("speechSynthesis" in window)
+    ) {
+
+        return;
+    }
+
+    if (!text) {
+        return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    const utterance =
+        new SpeechSynthesisUtterance(
+            String(text)
+        );
+
+    utterance.lang =
+        "ar-EG";
+
+    utterance.rate =
+        1;
+
+    utterance.pitch =
+        1;
+
+    window.speechSynthesis.speak(
+        utterance
+    );
+}
+
+
+/* =========================================================
+   PRO MODAL
+   ========================================================= */
+
+function openProModal() {
+
+    const modal =
+        $(
+            "#proModal",
+            ".pro-modal",
+            "[data-pro-modal]"
+        );
+
+    if (!modal) {
 
         alert(
-            "المتصفح بتاعك لا يدعم التعرف على الصوت."
+            "Edrak PRO قريبًا 🚀"
         );
 
         return;
-
     }
 
+    modal.classList.add(
+        "active"
+    );
 
-    if (recognition) {
-
-        recognition.stop();
-
-        recognition = null;
-
-        return;
-
-    }
-
-
-    recognition =
-        new SpeechRecognition();
-
-
-    recognition.lang =
-        "ar-EG";
-
-
-    recognition.interimResults =
-        false;
-
-
-    recognition.continuous =
-        false;
-
-
-    recognition.onstart =
-        () => {
-
-            $("voiceBtn").textContent =
-                "🔴";
-
-        };
-
-
-    recognition.onresult =
-        event => {
-
-            const text =
-                event
-                    .results[0][0]
-                    .transcript;
-
-
-            $("messageInput").value +=
-                text;
-
-
-            autoResizeInput();
-
-        };
-
-
-    recognition.onerror =
-        error => {
-
-            console.error(
-                "Voice:",
-                error
-            );
-
-        };
-
-
-    recognition.onend =
-        () => {
-
-            $("voiceBtn").textContent =
-                "🎙";
-
-
-            recognition =
-                null;
-
-        };
-
-
-    recognition.start();
-
+    modal.style.display =
+        "flex";
 }
 
 
-/* =====================================================
-   ESC KEY
-===================================================== */
+function closeProModal() {
 
-document.addEventListener(
-    "keydown",
-    event => {
+    const modal =
+        $(
+            "#proModal",
+            ".pro-modal",
+            "[data-pro-modal]"
+        );
+
+    if (!modal) {
+        return;
+    }
+
+    modal.classList.remove(
+        "active"
+    );
+
+    modal.style.display =
+        "";
+}
+
+
+function setupProButton() {
+
+    $all(
+        "#proBtn",
+        ".pro-btn",
+        "[data-pro]"
+    ).forEach(
+        button => {
+
+            button.addEventListener(
+                "click",
+                event => {
+
+                    event.preventDefault();
+
+                    openProModal();
+                }
+            );
+        }
+    );
+}
+
+
+/* =========================================================
+   MODALS
+   ========================================================= */
+
+function setupModalClose() {
+
+    $all(
+        "[data-close-modal]",
+        ".modal-close",
+        ".close-modal"
+    ).forEach(
+        button => {
+
+            button.addEventListener(
+                "click",
+                event => {
+
+                    event.preventDefault();
+
+                    closeProModal();
+                }
+            );
+        }
+    );
+
+    document.addEventListener(
+        "click",
+        event => {
+
+            const modal =
+                event.target.closest(
+                    "#proModal, .pro-modal"
+                );
+
+            if (
+                modal &&
+                event.target === modal
+            ) {
+
+                closeProModal();
+            }
+        }
+    );
+}
+
+
+/* =========================================================
+   QUICK PROMPTS
+   ========================================================= */
+
+function setupQuickPrompts() {
+
+    $all(
+        ".quick-prompt",
+        ".prompt-card",
+        "[data-prompt]"
+    ).forEach(
+        button => {
+
+            button.addEventListener(
+                "click",
+                event => {
+
+                    event.preventDefault();
+
+                    const text =
+                        button.dataset.prompt ||
+                        button.textContent.trim();
+
+                    if (text) {
+
+                        sendMessage(
+                            text
+                        );
+                    }
+                }
+            );
+        }
+    );
+}
+
+
+/* =========================================================
+   TEXTAREA
+   ========================================================= */
+
+function autoResizeTextarea(
+    textarea
+) {
+
+    if (!textarea) {
+        return;
+    }
+
+    textarea.style.height =
+        "auto";
+
+    textarea.style.height =
+        Math.min(
+            textarea.scrollHeight,
+            180
+        ) + "px";
+}
+
+
+/* =========================================================
+   SCROLL
+   ========================================================= */
+
+function scrollMessages(
+    container = null
+) {
+
+    const target =
+        container ||
+        $(
+            "#messages",
+            "#messageList",
+            ".messages",
+            ".chat-messages"
+        );
+
+    if (!target) {
+        return;
+    }
+
+    requestAnimationFrame(
+        () => {
+
+            target.scrollTop =
+                target.scrollHeight;
+        }
+    );
+}
+
+
+/* =========================================================
+   FORMAT MESSAGE
+   ========================================================= */
+
+function escapeHTML(
+    value
+) {
+
+    return String(
+        value ?? ""
+    )
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+        .replace(
+            /</g,
+            "&lt;"
+        )
+        .replace(
+            />/g,
+            "&gt;"
+        )
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+        .replace(
+            /'/g,
+            "&#039;"
+        );
+}
+
+
+function formatMessage(
+    text
+) {
+
+    let result =
+        escapeHTML(
+            text
+        );
+
+    /*
+      Markdown code blocks
+    */
+
+    result =
+        result.replace(
+            /```([\s\S]*?)```/g,
+            "<pre><code>$1</code></pre>"
+        );
+
+    /*
+      Inline code
+    */
+
+    result =
+        result.replace(
+            /`([^`]+)`/g,
+            "<code>$1</code>"
+        );
+
+    /*
+      Bold
+    */
+
+    result =
+        result.replace(
+            /\*\*(.*?)\*\*/g,
+            "<strong>$1</strong>"
+        );
+
+    /*
+      New lines
+    */
+
+    result =
+        result.replace(
+            /\n/g,
+            "<br>"
+        );
+
+    return result;
+}
+
+
+/* =========================================================
+   ERROR UI
+   ========================================================= */
+
+function showError(
+    message
+) {
+
+    console.error(
+        message
+    );
+
+    const old =
+        document.querySelector(
+            ".edrak-error"
+        );
+
+    if (old) {
+        old.remove();
+    }
+
+    const box =
+        document.createElement(
+            "div"
+        );
+
+    box.className =
+        "edrak-error";
+
+    box.innerHTML = `
+        <div class="edrak-error-inner">
+
+            <strong>
+                حصل خطأ
+            </strong>
+
+            <span>
+                ${escapeHTML(message)}
+            </span>
+
+            <button
+                type="button"
+                aria-label="إغلاق"
+            >
+                ×
+            </button>
+
+        </div>
+    `;
+
+    document.body.appendChild(
+        box
+    );
+
+    const closeButton =
+        box.querySelector(
+            "button"
+        );
+
+    if (closeButton) {
+
+        closeButton.addEventListener(
+            "click",
+            () => {
+                box.remove();
+            }
+        );
+    }
+
+    setTimeout(
+        () => {
+
+            if (
+                document.body.contains(
+                    box
+                )
+            ) {
+
+                box.remove();
+            }
+
+        },
+        6000
+    );
+}
+
+
+/* =========================================================
+   SERVER TEST
+   ========================================================= */
+
+async function checkServer() {
+
+    try {
+
+        const data =
+            await apiFetch(
+                "/health"
+            );
+
+        console.log(
+            "EDRAK SERVER ONLINE:",
+            data
+        );
+
+        return true;
+
+    } catch (error) {
+
+        console.error(
+            "EDRAK SERVER OFFLINE:",
+            error
+        );
+
+        return false;
+    }
+}
+
+
+/* =========================================================
+   AUTO OPEN SAVED CHAT
+   ========================================================= */
+
+async function openSavedChat() {
+
+    const saved =
+        localStorage.getItem(
+            CHAT_KEY
+        );
+
+    if (!saved) {
+        return;
+    }
+
+    const chatId =
+        Number(saved);
+
+    if (!Number.isFinite(chatId)) {
+        return;
+    }
+
+    const exists =
+        chats.some(
+            chat =>
+                Number(chat.id) ===
+                chatId
+        );
+
+    if (!exists) {
+
+        localStorage.removeItem(
+            CHAT_KEY
+        );
+
+        return;
+    }
+
+    await openChat(
+        chatId
+    );
+}
+
+
+/* =========================================================
+   INIT
+   ========================================================= */
+
+async function initApp() {
+
+    const token =
+        getToken();
+
+    /*
+      لو مش عامل Login
+    */
+
+    if (!token) {
 
         if (
-            event.key === "Escape"
+            location.pathname.endsWith(
+                "index.html"
+            ) ||
+            location.pathname.endsWith(
+                "/Edrak7/"
+            ) ||
+            location.pathname === "/"
         ) {
 
-            document
-                .querySelectorAll(
-                    ".modal"
-                )
-                .forEach(modal => {
-
-                    modal.classList.add(
-                        "hidden"
-                    );
-
-                });
-
+            location.href =
+                "login.html";
         }
 
+        return;
     }
+
+    /*
+      تحميل المستخدم المخزن
+    */
+
+    loadSavedUser();
+
+    /*
+      تشغيل الأحداث
+    */
+
+    setupComposer();
+    setupNewChatButton();
+    setupLogout();
+    setupVoice();
+    setupProButton();
+    setupModalClose();
+    setupQuickPrompts();
+
+    /*
+      تحديث المستخدم من السيرفر
+    */
+
+    try {
+
+        await loadCurrentUser();
+
+    } catch (error) {
+
+        console.error(
+            "LOAD USER ERROR:",
+            error
+        );
+
+        showError(
+            error.message
+        );
+
+        return;
+    }
+
+    /*
+      جلب المحادثات
+    */
+
+    try {
+
+        await loadChats();
+
+    } catch (error) {
+
+        console.error(
+            "LOAD CHATS ERROR:",
+            error
+        );
+
+        showError(
+            error.message
+        );
+
+        return;
+    }
+
+    /*
+      افتح آخر محادثة
+    */
+
+    if (chats.length) {
+
+        await openSavedChat();
+
+        if (!currentChatId) {
+            renderEmptyState();
+        }
+
+    } else {
+
+        renderEmptyState();
+    }
+
+    console.log(
+        "✅ Edrak AI جاهز"
+    );
+}
+
+
+/* =========================================================
+   START
+   ========================================================= */
+
+document.addEventListener(
+    "DOMContentLoaded",
+    initApp
 );
 
 
-/* =====================================================
-   INITIALIZE
-===================================================== */
+/* =========================================================
+   GLOBAL API
+   ========================================================= */
 
-async function init() {
+window.Edrak = {
 
-    await loadUser();
+    sendMessage,
+    openChat,
+    createChat,
+    deleteChat,
+    startNewChat,
 
-    await loadChats();
+    speakText,
 
-    $("messageInput").focus();
+    openProModal,
+    closeProModal,
 
-}
+    checkServer,
 
+    logoutUser,
 
-init();
+    getUser: () =>
+        currentUser,
+
+    getChats: () =>
+        chats,
+
+    getCurrentChatId: () =>
+        currentChatId
+};
